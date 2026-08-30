@@ -5,3 +5,7 @@ Reconstructs a CME limit order book from MDP3 market-by-order data and simulates
 Status: in progress. Book reconstruction complete and validated; feature layer and quoting logic in development.
 
 Replays ~ 290M market-by-order events into a live book state and validates the reconstructed top-of-book against Databento mbp-1.
+
+Replicated the Cont–Kukanov–Stoikov result on ES futures across 19 trading sessions in January 2025, reconstructing the limit order book from CME MDP3 market-by-order data. Regressing mid-price change on depth-normalised order flow imbalance gives R² = 0.60 ± 0.08 at 100-event buckets (~236ms), rising to 0.89 at 5,000-event buckets (~15s), with β stable at 0.090 ± 0.004 across sessions. Predictive power collapses entirely: R² falls from 0.82 contemporaneously to 0.0002 one bucket ahead, with β flipping negative — consistent with transient impact reverting as the queue rebuilds, though weak (mean t = −1.14). Order flow explains price movement mechanically but carries no exploitable forecast on the most heavily arbitraged futures contract in the world.
+
+Compared three estimators of fair value against the realised mid 100 events ahead: the mid, the size-weighted mid, and Stoikov's micro-price. The micro-price underperformed the weighted mid on every session tested, and underperformed the plain mid at short horizons. Its fitted adjustment reached ±0.068 at extreme imbalance states against ±0.125 for the weighted mid — roughly half the correction — and the shortfall was consistent across all 19 days rather than day-specific.
