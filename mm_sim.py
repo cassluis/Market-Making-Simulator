@@ -198,17 +198,6 @@ class Stoikov():
 
 def main():
     
-    client = db.Historical('db-GMNASrhiH3XaMedRmDh6jfRb3rLqL')
-    for d in ['2025-01-08','2025-01-09','2025-01-10','2025-01-13','2025-01-14',
-            '2025-01-15','2025-01-16','2025-01-17']:
-        data = client.timeseries.get_range(
-            dataset='GLBX.MDP3', schema='mbo', symbols='CLG5',
-            stype_in='raw_symbol',
-            start=f'{d}T14:00', end=f'{d}T19:30',
-        )
-        data.to_file(f'f:/market_making/CL_MBO/clg5-{d.replace("-","")}.dbn.zst')
-
-    data.to_file('f:/market_making/CL_MBO/clg5.dbn.zst')
 def replay(path, limit=None):
     book = OrderBook()
     rows = []
