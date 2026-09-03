@@ -22,3 +22,9 @@ variation at 200ms buckets and under 0.1% one bucket ahead.
 The weighted mid only helps at certain horizons. It cuts MSE by 21% at 25 events (roughly
 50ms), but at 1 event it is 5x worse than the plain mid, and there the micro price beats it
 on all 23 sessions.
+
+## Attribution
+
+The order book itself is mine: mm_sim.py
+
+The validation harness that checks it against mbp-1 was written with AI assistance: recon_check.py
