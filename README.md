@@ -22,3 +22,7 @@ variation at 200ms buckets and under 0.1% one bucket ahead.
 Testing the mid, weighted-mid and micro-price at predicting the mid-price at horizons from 1ms to 1s:
 The weighted-mid has the lowest MSE (beating Stoikov's micro-price by 0.001 points) and the plain mid 
 has the lowest MAE beating the mp by 0.005 points and the weighted mid by 0.009 points.
+
+While the micro-price showed no more predictive power than the other fair value estimations, it 
+was the only estimator which produced a positive spread pnl over the short sample frame.
+
