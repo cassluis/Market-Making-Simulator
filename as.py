@@ -28,6 +28,19 @@ def quotes(gamma, k, ticksize, T_t, mid, inventory, volatility):
 
     return bid, ask
 
+def refresh(order, price, allowed, side_book):
+    if not allowed:
+        return None                      # cancel (e.g. inventory limit hit)
+    if order is not None and order['price'] == price:
+        return order                     # unchanged: keep queue position
+    resting = side_book.get(price, {})
+    return {
+        'price': price,
+        'size': 1,
+        'queue_ahead': sum(resting.values()),
+        'ahead_ids': set(resting.keys())
+    }
+
 def run_backtest(path, sample_times, fair_values, volatilities, starting_capital, inventory_limits, gamma, k, ticksize):
     book = orderbook.OrderBook()
     store = db.DBNStore.from_file(path)
@@ -115,30 +128,12 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
                         s['inventory'],
                         volatility
                     )
-
+                    
                     bid = int(round(bid * 1e9))
                     ask = int(round(ask * 1e9))
 
-                    s['bid_order'] = None
-                    s['ask_order'] = None
-
-                    if s['inventory'] < s['max_inventory']:
-                        resting = book.bids.get(bid, {})
-                        s['bid_order'] = {
-                            'price': bid,
-                            'size': 1,
-                            'queue_ahead': sum(resting.values()),
-                            'ahead_ids': set(resting.keys())
-                        }
-                        
-                    if s['inventory'] > -s['max_inventory']:
-                        resting = book.asks.get(ask, {})
-                        s['ask_order'] = {
-                            'price': ask,
-                            'size': 1,
-                            'queue_ahead': sum(resting.values()),
-                            'ahead_ids': set(resting.keys())
-                        }
+                    s['bid_order'] = refresh(s['bid_order'], bid, s['inventory'] < s['max_inventory'], book.bids)
+                    s['ask_order'] = refresh(s['ask_order'], ask, s['inventory'] > -s['max_inventory'], book.asks)
 
                     if s['inventory'] > 0:
                         equity = s['cash'] + s['inventory'] * book.best_bid / 1e9
@@ -148,6 +143,7 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
                         equity = s['cash']
 
                     s['pnl_history'].append(equity)
+
         if rec.action == 'T':
             trade_price = rec.price
             trade_size = rec.size
@@ -156,7 +152,7 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
                 bid_order = s['bid_order']
                 ask_order = s['ask_order']
 
-                if bid_order is not None and trade_price == bid_order['price']:
+                if bid_order is not None and trade_price <= bid_order['price']:
                     opportunity = trade_size - bid_order['queue_ahead']
 
                     if opportunity > 0:
@@ -174,7 +170,7 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
                     else:
                         bid_order['queue_ahead'] -= trade_size
 
-                if ask_order is not None and trade_price == ask_order['price']:
+                if ask_order is not None and trade_price >= ask_order['price']:
                     opportunity = trade_size - ask_order['queue_ahead']
 
                     if opportunity > 0:
@@ -228,7 +224,27 @@ def main():
     all_results = []
 
     dates = [
-        ('20250131', '20250203')
+    ("20250106", "20250107"),
+    ("20250107", "20250108"),
+    ("20250108", "20250110"),
+    ("20250110", "20250113"),
+    ("20250113", "20250114"),
+    ("20250114", "20250115"),
+    ("20250115", "20250116"),
+    ("20250116", "20250117"),
+    ("20250117", "20250121"),
+    ("20250121", "20250122"),
+    ("20250122", "20250123"),
+    ("20250123", "20250124"),
+    ("20250124", "20250127"),
+    ("20250127", "20250128"),
+    ("20250128", "20250129"),
+    ("20250129", "20250130"),
+    ("20250130", "20250131"),
+    ("20250131", "20250203"),
+    ("20250203", "20250204"),
+    ("20250204", "20250205"),
+    ("20250205", "20250206"),
     ]
 
     inventory_limits = [10, 25, 50, 100, 250, 500]
@@ -269,7 +285,7 @@ def main():
 
         lob_sample = lob[['time', 'mid', 'wmid', 'mp']].copy()
 
-        lob_sample['time'] = lob_sample['time'].dt.floor(config.sample_freq)
+        lob_sample['time'] = lob_sample['time'].dt.ceil(config.sample_freq)
 
         lob_sample = (
             lob_sample
