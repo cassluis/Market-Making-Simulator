@@ -7,16 +7,17 @@ import databento as db
 import numba
 import time
 import orderbook
-from fvest import Stoikov
+from fvest import get_imbalance_bins
 
 @dataclass
 class config:
     vol_window: str = '60s'
     sample_freq: str = '1s'
-    gamma: float = 0.1
-    k: float = 1.5
+    gamma: float = 1e-4
+    k: float = 1.549
     ticksize: float = 0.25
     starting_capital: float = 1_000_000
+    fee: float = 0.024
 
 @numba.njit
 def quotes(gamma, k, ticksize, T_t, mid, inventory, volatility):
@@ -27,6 +28,55 @@ def quotes(gamma, k, ticksize, T_t, mid, inventory, volatility):
     ask = np.ceil((r_t + spread_t / 2) / ticksize) * ticksize
 
     return bid, ask
+
+def estimate_G6(lob, bins, n_imb, steps, ticksize):
+    one_tick = lob[np.round((lob['ask'] - lob['bid']) / ticksize) == 1]
+    mid = ((one_tick['bid'] + one_tick['ask']) / 2).to_numpy()
+
+    imb_bucket = pd.cut(
+        one_tick['bs'] / (one_tick['bs'] + one_tick['as']),
+        bins=bins,
+        labels=False,
+        include_lowest=True
+    ).to_numpy()
+
+    current, following = imb_bucket[:-1], imb_bucket[1:]
+    move = np.round((mid[1:] - mid[:-1]) / ticksize)
+
+    keep = ~np.isnan(current) & ~np.isnan(following) & (np.abs(move) <= 1)
+    current = current[keep].astype(int)
+    following = following[keep].astype(int)
+    move = move[keep].astype(int)
+
+    current = np.r_[current, n_imb - 1 - current]
+    following = np.r_[following, n_imb - 1 - following]
+    move = np.r_[move, -move]
+
+    still = move == 0
+
+    Q = np.zeros((n_imb, n_imb))
+    R1 = np.zeros((n_imb, 2))
+    R2 = np.zeros((n_imb, n_imb))
+
+    np.add.at(Q, (current[still], following[still]), 1)
+    np.add.at(R1, (current[~still], (move[~still] > 0).astype(int)), 1)
+    np.add.at(R2, (current[~still], following[~still]), 1)
+
+    total = Q.sum(1) + R1.sum(1)
+    Q, R1, R2 = Q / total[:, None], R1 / total[:, None], R2 / total[:, None]
+
+    N = np.linalg.inv(np.eye(n_imb) - Q)
+    G1 = N @ R1 @ np.array([-ticksize, ticksize])
+    B = N @ R2
+
+    G6 = G1.copy()
+    term = G1.copy()
+
+    for _ in range(steps - 1):
+        term = B @ term
+        G6 += term
+
+    return G6
 
 def refresh(order, price, allowed, side_book):
     if not allowed:
@@ -89,13 +139,17 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
                         removed = old_size
                         order['ahead_ids'].discard(rec.order_id)
 
+                    elif rec.size > old_size:
+                        removed = old_size
+                        order['ahead_ids'].discard(rec.order_id)
+
                     else:
                         removed = max(0, old_size - rec.size)
 
                         if rec.size <= 0:
                             order['ahead_ids'].discard(rec.order_id)
 
-                    order['queue_ahead'] -= removed
+                    order['queue_ahead'] = max(0, order['queue_ahead'] - removed)
 
         book.handle(rec)
 
@@ -119,6 +173,18 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
 
                     s['previous bid'], s['previous ask'] = book.best_bid, book.best_ask
 
+                    if sample_idx == len(sample_times) - 1:
+                        if s['inventory'] > 0:
+                            s['cash'] += s['inventory'] * book.best_bid / 1e9
+                        elif s['inventory'] < 0:
+                            s['cash'] += s['inventory'] * book.best_ask / 1e9
+
+                        s['inventory'] = 0
+                        s['bid_order'] = None
+                        s['ask_order'] = None
+                        s['pnl_history'].append(s['cash'])
+                        continue
+
                     bid, ask = quotes(
                         gamma,
                         k,
@@ -132,8 +198,24 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
                     bid = int(round(bid * 1e9))
                     ask = int(round(ask * 1e9))
 
-                    s['bid_order'] = refresh(s['bid_order'], bid, s['inventory'] < s['max_inventory'], book.bids)
-                    s['ask_order'] = refresh(s['ask_order'], ask, s['inventory'] > -s['max_inventory'], book.asks)
+                    can_buy = s['inventory'] < s['max_inventory']
+                    can_sell = s['inventory'] > -s['max_inventory']
+
+                    if can_buy and bid >= book.best_ask:
+                        s['cash'] -= book.best_ask / 1e9
+                        s['inventory'] += 1
+                        s['num_trades'] += 1
+                        s['bid_order'] = None
+                    else:
+                        s['bid_order'] = refresh(s['bid_order'], bid, can_buy, book.bids)
+
+                    if can_sell and ask <= book.best_bid:
+                        s['cash'] += book.best_bid / 1e9
+                        s['inventory'] -= 1
+                        s['num_trades'] += 1
+                        s['ask_order'] = None
+                    else:
+                        s['ask_order'] = refresh(s['ask_order'], ask, can_sell, book.asks)
 
                     if s['inventory'] > 0:
                         equity = s['cash'] + s['inventory'] * book.best_bid / 1e9
@@ -167,8 +249,6 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
 
                         if bid_order['size'] == 0:
                             s['bid_order'] = None
-                    else:
-                        bid_order['queue_ahead'] -= trade_size
 
                 if ask_order is not None and trade_price >= ask_order['price']:
                     opportunity = trade_size - ask_order['queue_ahead']
@@ -185,8 +265,6 @@ def run_backtest(path, sample_times, fair_values, volatilities, starting_capital
 
                         if ask_order['size'] == 0:
                             s['ask_order'] = None
-                    else:
-                        ask_order['queue_ahead'] -= trade_size
 
     results = []
 
@@ -245,6 +323,19 @@ def main():
     ("20250203", "20250204"),
     ("20250204", "20250205"),
     ("20250205", "20250206"),
+    ("20260831", "20260901"),
+    ("20260901", "20260902"),
+    ("20260902", "20260903"),
+    ("20260903", "20260904"),
+    ("20260904", "20260908"),
+    ("20260908", "20260909"),
+    ("20260909", "20260910"),
+    ("20260910", "20260911"),
+    ("20260911", "20260914"),
+    ("20260914", "20260915"),
+    ("20260915", "20260916"),
+    ("20260916", "20260917"),
+    ("20260917", "20260918"),
     ]
 
     inventory_limits = [10, 25, 50, 100, 250, 500]
@@ -259,29 +350,20 @@ def main():
         lob_cal = orderbook.load(cal_path)
         lob = orderbook.load(path)
 
-        T_cal, _, _ = Stoikov.prep_data_sym(lob_cal, 10, 1, 1)
-        T, _, _ = Stoikov.prep_data_sym(lob, 10, 1, 1)
-
-        G1, B = Stoikov.estimate(T_cal)
-        G6 = Stoikov.getG6(G1, B)
-
-        T['mp'] = T['mid'] + G6[T['imb_bucket'].astype(int)]
+        bins = get_imbalance_bins(lob_cal, 10)
+        G6 = estimate_G6(lob_cal, bins, 10, 6, config.ticksize)
 
         lob['time'] = pd.to_datetime(lob['time'], unit='ns')
-        T['time'] = pd.to_datetime(T['time'], unit='ns')
-
         lob = lob.sort_values('time').reset_index(drop=True)
-        T = T.sort_values('time').reset_index(drop=True)
-
-        lob = pd.merge_asof(
-            lob,
-            T[['time', 'mp']],
-            on='time',
-            direction='backward'
-        )
 
         lob['imbalance'] = lob['bs'] / (lob['bs'] + lob['as'])
         lob['wmid'] = lob['imbalance'] * lob['ask'] + (1 - lob['imbalance']) * lob['bid']
+
+        imb_bucket = pd.cut(lob['imbalance'], bins=bins, labels=False, include_lowest=True).to_numpy()
+        one_tick = (np.round((lob['ask'] - lob['bid']).to_numpy() / config.ticksize) == 1) & ~np.isnan(imb_bucket)
+        bucket = np.where(one_tick, imb_bucket, 0).astype(int)
+
+        lob['mp'] = lob['mid'] + np.where(one_tick, G6[bucket], 0.0)
 
         lob_sample = lob[['time', 'mid', 'wmid', 'mp']].copy()
 
@@ -301,7 +383,7 @@ def main():
         lob_sample['volatility'] = lob_sample.rolling(
             config.vol_window,
             on='time'
-        )['log_return'].std()
+        )['log_return'].std() * lob_sample['mid']
 
         sample_times = lob_sample['time'].to_numpy(
             dtype='datetime64[ns]'
@@ -327,12 +409,14 @@ def main():
             config.ticksize
         )
 
+        results['pnl after fees'] = results['pnl'] - config.fee * results['trade count']
         results['date'] = date
         results['calibration date'] = cal_date
 
         all_results.append(results)
+        pd.concat(all_results, ignore_index=True).to_csv('/volumes/t9/market_making/backtest_daily_results.csv', index=False)
 
-        print(results[['max inventory', 'fair value', 'pnl', 'pnl_std', 'trade count', 'pnl volatility', 'return volatility', 'inventory pnl']])
+        print(results[['max inventory', 'fair value', 'pnl', 'pnl after fees', 'pnl_std', 'trade count', 'pnl volatility', 'return volatility', 'inventory pnl']])
 
     results = pd.concat(all_results, ignore_index=True)
 
@@ -342,6 +426,7 @@ def main():
         .agg(
             total_pnl=('pnl', 'sum'),
             mean_pnl=('pnl', 'mean'),
+            mean_pnl_after_fees=('pnl after fees', 'mean'),
             pnl_std=('pnl', 'std'),
             total_trades=('trade count', 'sum'),
             mean_trades=('trade count', 'mean'),
@@ -351,6 +436,7 @@ def main():
         .reset_index())
     
     summary['gross sharpe'] = summary['mean_pnl'] / summary['pnl_std']
+    summary.to_csv('/volumes/t9/market_making/backtest_summary.csv', index=False)
 
     print(summary)
 
