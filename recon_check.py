@@ -1,6 +1,6 @@
 """Validate the MBO order-book reconstruction against Databento's official mbp-1.
 
-For every ES session in ES_MBO/, replay the MBO stream through mm_sim.OrderBook
+For every ES session in ES_MBO/, replay the MBO stream through orderbook.OrderBook
 and compare the resulting top-of-book against the mbp-1 feed for the same day.
 
 Alignment
@@ -37,13 +37,13 @@ import numpy as np
 import pandas as pd
 import databento as db
 
-sys.path.insert(0, r'F:/market_making')
-from mm_sim import OrderBook
+sys.path.insert(0, '/Volumes/T9/Market_making')
+from orderbook import OrderBook
 
-MBO_DIR = r'F:/market_making/ES_MBO'
-MBP1_DIR = r'F:/market_making/ES_MBP1'
-OUT_DIR = r'F:/market_making/results'
-LEGACY_MBP1_DIR = r'C:/Users/cassc/Downloads/GLBX-20260822-5SNJX4LUJ4'
+MBO_DIR = '/Volumes/T9/Market_making/ES_MBO'
+MBP1_DIR = '/Volumes/T9/Market_making/ES_MBP1'
+OUT_DIR = '/Volumes/T9/Market_making/results'
+LEGACY_MBP1_DIR = '/Volumes/T9/Market_making/ES_MBP1/GLBX-20260901-4S9HJ5HFKF'
 
 INSTRUMENT_ID = 5002              # ESH5 -- the only id in the ES.c.0 MBO files
 UNDEF_PRICE = 9223372036854775807
@@ -230,7 +230,7 @@ def main(argv):
     argv = [a for a in argv if not a.startswith('--')]
     only = set(argv) or None
 
-    mbo = {day_of(p): p for p in sorted(glob.glob(os.path.join(MBO_DIR, '*.mbo.dbn.zst')))}
+    mbo = {day_of(p): p for p in sorted(glob.glob(os.path.join(MBO_DIR, 'glbx-mdp3-2025*.mbo.dbn.zst')))}
     mbp1 = {}
     for d in (MBP1_DIR, LEGACY_MBP1_DIR):
         for p in sorted(glob.glob(os.path.join(d, '*.mbp-1.dbn.zst'))):

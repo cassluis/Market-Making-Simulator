@@ -18,7 +18,10 @@ This is an event-driven Avellaneda–Stoikov market-making backtest on CME E-min
 
 ## How it works
 
-- **Order book:** `orderbook.py` replays MBO messages into a book with price-time priority. <!-- RECON -->
+- **Order book:** `orderbook.py` replays MBO messages into a book with price-time priority.
+  - **Validation:** checked against Databento's mbp-1 feed at every packet end (F_LAST): 147,826,414 book states over the 27 sessions from 2025 that have both feeds, with 100% exact top of book and 0 mismatches.
+  - **Join on F_LAST:** joining on the MDP3 sequence number instead reports a false 0.008% error.
+  - See `recon_check.py` and `results/recon_accuracy.csv`.
 - **Fair values:** the mid, the weighted mid, and the Stoikov (2018) micro-price, estimated on the previous session.
 - **Quoting:** Avellaneda–Stoikov reservation price and spread, with σ in index points, γ = 1e-4 and k = 1.549. One lot each side, requoted every second from 09:30 to 16:00 ET, and flat at the close.
 - **Fills:** queue position is tracked order by order from the MBO stream. A quote fills when the volume traded at or through it exceeds the queue ahead. Fees are 0.024 pt per contract per side, about $1.20.
@@ -48,6 +51,7 @@ The data (Databento GLBX.MDP3 MBO) isn't included.
 ## Limitations
 
 - **No latency:** orders are live the instant they are placed.
+- **Validation covers top of book only:** it can't confirm queue order within a price level.
 - **The 2026 books are unvalidated:** there is no mbp-1 data for those sessions, and they are built from the most-traded contract each day.
 - **Old estimators remain:** `fvest.py` and `mm_sim.py` still contain the broken micro-price estimators, but `as.py` doesn't use them.
 
