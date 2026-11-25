@@ -1,0 +1,21 @@
+# Data (Databento MBO / mbp-1 and derived features) is not committed
+ES_MBO/
+ES_FUT_MBO/
+CL_MBO/
+ES_CL_MBO/
+ES_MBP1/
+features/
+features_cl/
+filtered_mbo/
+*.dbn.zst
+*.zip
+
+# Large diagnostic outputs (regenerate with the diagnostics scripts)
+diagnostics/diag_out/*.parquet
+diagnostics/diag_out/*.npz
+diagnostics/diag_out/logs/
+
+# Python / macOS
+__pycache__/
+._*
+.DS_Store
